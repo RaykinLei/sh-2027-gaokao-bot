@@ -1,0 +1,121 @@
+name: 上海2027高考信息自动监控+微信推送
+
+on:
+  schedule:
+    - cron: "0 1 * * *"  # 每天北京时间9:00
+  workflow_dispatch:
+
+jobs:
+  run_gaokao_bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Run Shanghai 2027 Gaokao Bot
+        env:
+          SENDKEY: ${{ secrets.SENDKEY }}
+          DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
+          DOUBAO_SECRET_KEY: ${{ secrets.DOUBAO_SECRET_KEY }}
+        run: |
+          cat > bot.py << 'EOF'
+import os
+import requests
+from bs4 import BeautifulSoup
+from collections import OrderedDict
+
+# 抓取上海市教育考试院 2027高考相关
+def get_shmeea_2027():
+    try:
+        url = "https://www.shmeea.edu.cn/"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        news = []
+        for a in soup.select("a"):
+            title = a.get_text(strip=True)
+            href = a.get("href", "")
+            if ("2027" in title or "2027届" in title or "高考" in title) and ("上海" in title or "招考" in title):
+                if len(title) > 8:
+                    news.append({"title": title, "source": "上海招考热线", "url": href})
+        return news[:10]
+    except:
+        return []
+
+# 抓取上海教育新闻网 2027高考
+def get_shedunews_2027():
+    try:
+        url = "https://m.shedunews.sh.cn/msite_4/"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        news = []
+        for item in soup.select(".news-item"):
+            title = item.get_text(strip=True)
+            if ("2027" in title or "高考" in title) and len(title) > 8:
+                news.append({"title": title, "source": "上海教育新闻网", "url": ""})
+        return news[:10]
+    except:
+        return []
+
+# 合并去重
+def merge_news():
+    all_news = get_shmeea_2027() + get_shedunews_2027()
+    unique = OrderedDict()
+    for n in all_news:
+        key = n["title"].strip()
+        if key not in unique:
+            unique[key] = n
+    return list(unique.values())[:10]
+
+# AI 提炼一句话
+def ai_summary(title, api_key, secret_key):
+    try:
+        url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}:{secret_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "doubao-lite-4k",
+            "messages": [
+                {"role": "user", "content": f"用一句话提炼这条上海2027高考信息：{title}"}
+            ]
+        }
+        resp = requests.post(url, json=payload, timeout=10).json()
+        return resp["choices"][0]["message"]["content"].strip()
+    except:
+        return "无法提炼"
+
+# 微信推送
+def push_wechat(content, sendkey):
+    url = f"https://sctapi.ftqq.com/{sendkey}.send"
+    data = {
+        "title": "📌 上海2027高考 今日更新",
+        "desp": content
+    }
+    requests.post(url, data=data, timeout=10)
+
+# 主程序
+if __name__ == "__main__":
+    sendkey = os.getenv("SENDKEY")
+    api_key = os.getenv("DOUBAO_API_KEY")
+    secret_key = os.getenv("DOUBAO_SECRET_KEY")
+
+    news_list = merge_news()
+    lines = ["📌 上海2027高考 今日重要更新"]
+    for i, item in enumerate(news_list, 1):
+        title = item["title"]
+        source = item["source"]
+        summary = ai_summary(title, api_key, secret_key)
+        lines.append(f"{i}.【{source}】{title}\n💡 {summary}")
+
+    final = "\n\n".join(lines)
+    push_wechat(final, sendkey)
+EOF
+          python bot.py
