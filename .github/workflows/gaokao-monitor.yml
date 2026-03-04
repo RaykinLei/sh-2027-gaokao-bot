@@ -1,0 +1,33 @@
+# gaokao-monitor.yml（.github/workflows/目录下）
+name: Shanghai 2027 Gaokao Monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */2 * * *'
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run monitor script
+        env:
+          # 只保留这3个，把WECHAT_WEBHOOK_KEY换成SENDKEY
+          DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
+          DOUBAO_ENDPOINT_ID: ${{ secrets.DOUBAO_ENDPOINT_ID }}
+          SENDKEY: ${{ secrets.SENDKEY }}  # 对应SendKey的Secrets
+        run: python gaokao_monitor.py
+
+      # 可选：失败提醒也换成SendKey
+      - name: Notify failure
+        if: failure()
+        run: |
+          curl -s "https://sctapi.ftqq.com/${{ secrets.SENDKEY }}.send" \
+            -d "title=高考监控任务失败" \
+            -d "desp=请查看GitHub Actions日志排查问题"
